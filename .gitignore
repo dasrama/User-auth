@@ -1,0 +1,4 @@
+.env
+\venv
+init.sql
+__pycache__/
