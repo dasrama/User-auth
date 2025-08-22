@@ -1,21 +1,13 @@
 import asyncpg
 from fastapi import FastAPI, Request, Depends
 from fastapi.responses import JSONResponse
-from passlib.context import CryptContext
 
 from config.config import get_postgres_cursor
 from schemas.user import User
+from utils.auth import AuthSecurity
 
 
 app = FastAPI()
-
-pwd_context = CryptContext(schemes=['bcrypt'], deprecated="auto")
-
-def generate_hashed_password(password: str) -> str:
-    return pwd_context.hash(password)
-
-def verify_password(plain_password: str, hashed_password: str)-> bool:
-    return pwd_context.verify(plain_password, hashed_password)
 
 @app.post("/register")
 async def register(user: User, db: asyncpg.Connection = Depends(get_postgres_cursor)):
@@ -31,7 +23,7 @@ async def register(user: User, db: asyncpg.Connection = Depends(get_postgres_cur
                 }
             )
         
-        hashed_password = generate_hashed_password(user.password)
+        hashed_password = AuthSecurity.generate_hashed_password(user.password)
 
         await db.execute(
             "INSERT INTO users (email, password) VALUES ($1, $2)",
@@ -55,46 +47,58 @@ async def register(user: User, db: asyncpg.Connection = Depends(get_postgres_cur
                 "data": None
             }
         )
-        
+
+# JWT --> headers (algo+type) + payload (user info such as user_id, username, expiry time, role) + signature    
 
 @app.post("/login")
-async def login(request: Request, db: asyncpg.Connection = Depends(get_postgres_cursor)):
-    auth_header = request.headers.get("Authorization")
-     
-    if not auth_header:
+async def login(user: User, db: asyncpg.Connection = Depends(get_postgres_cursor)):
+    try:
+        user_data = await db.fetchrow('SELECT * FROM users WHERE email = $1', user.email)
+        if not user_data:
+            return JSONResponse(
+                status_code=401,
+                content={
+                    "status": "401 unauthorized",
+                    "error": "authentication error",
+                    "message": "Please register your email"
+                }
+            )
+        
+        valid_password = AuthSecurity.verify_password(user.password, user_data["password"])
+        if not valid_password:
+            return JSONResponse(
+                status_code=401,
+                content={
+                    "status": "401 unauthorized",
+                    "error": "authentication error",
+                    "message": "Invalid password"
+                }
+            )
+
+        # create token with correct payload
+        access_token = AuthSecurity.create_access_token(
+            user_data={"email": user_data["email"], "user_id": user_data["id"]}
+        )
+
         return JSONResponse(
-            status_code=401,
+            status_code=200,
             content={
-                "status": "401 unauthorized",
-                "error": "authentication error",
-                "message": "please authenticate first"
+                "status": "successfully logged in",
+                "error": None,
+                "data": {
+                    "token": access_token
+                }
             }
         )
-    
-    body = await request.json()
-    email = body.get("email")
 
-    query = "SELECT email, password FROM users WHERE email=$1"
-    result = await db.fetchrow(query, email)
-
-    if not result:
+    except Exception as e:
         return JSONResponse(
-            status_code=404,
+            status_code=500,
             content={
-                "error": "User not found in database",
-                "data": None,
-                "status": "Not Found"
+                "status": "internal server error",
+                "error": str(e),
+                "data": None
             }
         )
 
-    return JSONResponse(
-        status_code=200,
-        content={
-            "status": "successfully logged in",
-            "error": None,
-            "data": {
-                "email": email
-            }
-        }
-    )
     

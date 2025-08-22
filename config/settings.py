@@ -7,6 +7,8 @@ class Setting(BaseSettings):
     POSTGRES_HOST: str
     POSTGRES_PORT: int
 
+    JWT_SECRET_KEY: str
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
